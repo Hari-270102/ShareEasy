@@ -22,7 +22,6 @@ const { v4: uuidv4 } = require('uuid');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 // NOTE: Gemini is kept for future use (when deploying online).
 // Currently using local keyword detection (works without internet).
-const { Resend } = require('resend');
 const cors       = require('cors');
 
 const app  = express();
@@ -53,8 +52,32 @@ const upload = multer({
   limits: { fileSize: 50 * 1024 * 1024 } // max 50MB
 });
 
-// ── Resend email client ───────────────────
-const resend = new Resend(process.env.RESEND_API_KEY);
+// ── Brevo email helper (HTTP API, works on Render) ───────────────────
+async function sendBrevoEmail({ to, toName, subject, html, attachmentPath, attachmentName }) {
+  const body = {
+    sender   : { name: 'ShareEasy', email: 'harikrishnaunofficial@gmail.com' },
+    to       : [{ email: to, name: toName || to }],
+    subject,
+    htmlContent: html
+  };
+  if (attachmentPath) {
+    const fileBuffer = fs.readFileSync(attachmentPath);
+    const fileSizeMB = fileBuffer.length / (1024 * 1024);
+    if (fileSizeMB <= 10) {
+      body.attachment = [{ name: attachmentName, content: fileBuffer.toString('base64') }];
+    }
+  }
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method : 'POST',
+    headers: { 'api-key': process.env.BREVO_API_KEY, 'Content-Type': 'application/json' },
+    body   : JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.message || 'Brevo send failed');
+  }
+  return true;
+}
 
 // ── In-memory list of shared files ───────────
 // (works for local use; for production use a database)
@@ -247,14 +270,14 @@ app.post('/api/convert-and-share', async (req, res) => {
 
     // ── Send email with file attached (if recipient email provided) ──
     let emailStatus = 'no_email';
-    if (recipientEmail && process.env.RESEND_API_KEY) {
+    if (recipientEmail && process.env.BREVO_API_KEY) {
       try {
-        const fileBuffer = fs.readFileSync(outPath);
-        const { error } = await resend.emails.send({
-          from   : 'ShareEasy <onboarding@resend.dev>',
-          to     : [recipientEmail],
-          subject: `${recipientName || 'Someone'} shared a file with you via ShareEasy`,
-          html   : `
+        const shareLink = `${req.protocol}://${req.get('host')}/share/${shareId}`;
+        await sendBrevoEmail({
+          to            : recipientEmail,
+          toName        : recipientName || recipientEmail,
+          subject       : `${recipientName || 'Someone'} shared a file with you via ShareEasy`,
+          html          : `
             <div style="font-family:sans-serif;max-width:520px;margin:0 auto">
               <h2 style="color:#1a1a18">⚡ ShareEasy</h2>
               <p>Hi <strong>${recipientName || 'there'}</strong>,</p>
@@ -263,22 +286,16 @@ app.post('/api/convert-and-share', async (req, res) => {
                 <tr><td><strong>File:</strong></td><td>${entry.displayName}</td></tr>
                 <tr><td><strong>Converted:</strong></td><td>${entry.convertedFrom} → ${entry.convertedTo}</td></tr>
               </table>
-              <p>The converted file is attached to this email. Simply open it!</p>
+              <p>📎 The file is attached below (if under 10MB).</p>
+              <p>Or <a href="${shareLink}">click here to download it</a> anytime.</p>
               <hr style="border:none;border-top:1px solid #eee;margin:20px 0"/>
               <p style="color:#aaa;font-size:12px">Sent via ShareEasy &mdash; convert &amp; share files instantly</p>
             </div>`,
-          attachments: [{
-            filename: entry.displayName,
-            content : fileBuffer
-          }]
+          attachmentPath: outPath,
+          attachmentName: entry.displayName
         });
-        if (error) {
-          console.error('Email error:', error.message);
-          emailStatus = 'failed';
-        } else {
-          emailStatus = 'sent';
-          console.log(`  ✉️  Email sent to ${recipientEmail}`);
-        }
+        emailStatus = 'sent';
+        console.log(`  ✉️  Email sent to ${recipientEmail}`);
       } catch (mailErr) {
         console.error('Email error:', mailErr.message);
         emailStatus = 'failed';
