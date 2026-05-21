@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ShareEasy — File Shared With You</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #f5f4f0;
+      color: #1a1a18;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    header {
+      width: 100%;
+      background: #1a1a18;
+      color: #fff;
+      padding: 18px 24px;
+      text-align: center;
+    }
+    .logo { display: flex; align-items: center; justify-content: center; gap: 10px; }
+    .logo-icon { font-size: 26px; }
+    .logo-text { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
+    .logo-sub { font-size: 12px; color: #888; margin-top: 3px; }
+
+    main {
+      width: 100%;
+      max-width: 520px;
+      padding: 40px 20px 60px;
+    }
+
+    /* ── Loading / Error states ── */
+    .state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #aaa;
+      font-size: 15px;
+      line-height: 1.7;
+    }
+    .state .icon { font-size: 48px; margin-bottom: 14px; }
+
+    /* ── File card ── */
+    .file-card {
+      background: #fff;
+      border: 1px solid #e5e4e0;
+      border-radius: 16px;
+      padding: 28px 24px;
+      margin-bottom: 16px;
+    }
+
+    .sender-note {
+      font-size: 14px;
+      color: #666;
+      margin-bottom: 22px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #f0efe9;
+    }
+    .sender-note strong { color: #1a1a18; }
+
+    .file-icon-wrap {
+      width: 72px;
+      height: 72px;
+      border-radius: 14px;
+      background: #f0efe9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 36px;
+      margin-bottom: 16px;
+    }
+
+    .file-name {
+      font-size: 20px;
+      font-weight: 700;
+      color: #1a1a18;
+      margin-bottom: 6px;
+      word-break: break-word;
+    }
+
+    .file-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 24px;
+    }
+    .meta-chip {
+      background: #f5f4f0;
+      border: 1px solid #e5e4e0;
+      border-radius: 20px;
+      padding: 4px 12px;
+      font-size: 12px;
+      font-weight: 500;
+      color: #555;
+    }
+    .meta-chip.conversion {
+      background: #e8f4ff;
+      border-color: #b3d9f7;
+      color: #1565c0;
+    }
+
+    .btn-download {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      padding: 16px;
+      background: #1a1a18;
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: opacity 0.15s;
+    }
+    .btn-download:hover { opacity: 0.85; }
+    .btn-download .dl-icon { font-size: 20px; }
+
+    /* ── Footer ── */
+    .share-footer {
+      text-align: center;
+      font-size: 13px;
+      color: #aaa;
+      margin-top: 8px;
+    }
+    .share-footer a {
+      color: #1a1a18;
+      font-weight: 600;
+      text-decoration: none;
+    }
+    .share-footer a:hover { text-decoration: underline; }
+
+    .expiry-note {
+      text-align: center;
+      font-size: 12px;
+      color: #bbb;
+      margin-top: 14px;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="logo">
+      <span class="logo-icon">⚡</span>
+      <span class="logo-text">ShareEasy</span>
+    </div>
+    <p class="logo-sub">Convert &amp; share files instantly</p>
+  </header>
+
+  <main id="main">
+    <div class="state" id="loadingState">
+      <div class="icon">⏳</div>
+      Loading your file…
+    </div>
+  </main>
+
+  <script>
+    // Extract shareId from the URL path: /share/<shareId>
+    const shareId = window.location.pathname.split('/share/')[1];
+
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function getFileIcon(name) {
+      const ext = (name || '').split('.').pop().toLowerCase();
+      const icons = {
+        pdf: '📄', docx: '📝', doc: '📝', txt: '🔤',
+        png: '🖼️', jpg: '📷', jpeg: '📷', webp: '🌐',
+        xlsx: '📊', xls: '📊', csv: '📋'
+      };
+      return icons[ext] || '📁';
+    }
+
+    function formatSize(bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' KB';
+      return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    function showError(msg) {
+      document.getElementById('main').innerHTML = `
+        <div class="state">
+          <div class="icon">❌</div>
+          ${escapeHtml(msg)}
+        </div>`;
+    }
+
+    async function loadFile() {
+      if (!shareId) {
+        showError('No file ID found in this link.');
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/file/' + encodeURIComponent(shareId));
+        if (!res.ok) {
+          showError('This file was not found or has expired.');
+          return;
+        }
+        const f = await res.json();
+
+        const icon         = getFileIcon(f.displayName);
+        const size         = formatSize(f.fileSize);
+        const safeName     = escapeHtml(f.displayName);
+        const safeFrom     = escapeHtml(f.convertedFrom);
+        const safeTo       = escapeHtml(f.convertedTo);
+        const safeRecipient = escapeHtml(f.recipientName);
+        const safeShareId  = encodeURIComponent(f.shareId);
+
+        document.title = `ShareEasy — ${f.displayName}`;
+
+        document.getElementById('main').innerHTML = `
+          <div class="file-card">
+            <div class="sender-note">
+              📬 A file has been shared with <strong>${safeRecipient}</strong>
+            </div>
+            <div class="file-icon-wrap">${icon}</div>
+            <div class="file-name">${safeName}</div>
+            <div class="file-meta">
+              <span class="meta-chip conversion">${safeFrom} → ${safeTo}</span>
+              <span class="meta-chip">${size}</span>
+            </div>
+            <a class="btn-download" href="/api/download/${safeShareId}" download>
+              <span class="dl-icon">⬇</span>
+              Download ${safeTo} File
+            </a>
+          </div>
+          <div class="share-footer">
+            Want to send files too? <a href="/">Try ShareEasy →</a>
+          </div>
+          <div class="expiry-note">This link was generated by ShareEasy</div>
+        `;
+      } catch (err) {
+        showError('Could not load the file. Please check the link and try again.');
+      }
+    }
+
+    loadFile();
+  </script>
+</body>
+</html>

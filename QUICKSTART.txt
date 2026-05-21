@@ -1,0 +1,28 @@
+╔════════════════════════════════════════════════════╗
+║          SHAREEASY - QUICK START                   ║
+╚════════════════════════════════════════════════════╝
+
+🚀 FASTEST WAY TO GET STARTED:
+
+1. Install Node.js from: https://nodejs.org
+   (Download the LTS version)
+
+2. Open this folder in VS Code
+
+3. Open Terminal in VS Code (Ctrl + `)
+
+4. Run: npm install
+   (Wait for it to finish)
+
+5. Rename ".env.example" to ".env"
+   Add your Claude API key inside
+
+6. Run: npm start
+
+7. Open browser → http://localhost:3000
+
+That's it! Your app is running locally.
+
+📖 For detailed instructions, open: README.md
+
+🌍 To deploy online, follow PART 2 in README.md

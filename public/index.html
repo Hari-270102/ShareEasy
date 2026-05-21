@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ShareEasy — Send & Receive Files</title>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+
+  <!-- ── Header ── -->
+  <header>
+    <div class="logo">
+      <span class="logo-icon">⚡</span>
+      <span class="logo-text">ShareEasy</span>
+    </div>
+    <p class="logo-sub">Convert &amp; share files instantly</p>
+  </header>
+
+  <!-- ── Tab navigation ── -->
+  <nav class="tabs">
+    <button class="tab active" data-tab="send">📤 Send</button>
+    <button class="tab" data-tab="receive">📥 Receive</button>
+    <button class="tab" data-tab="history">📋 History</button>
+  </nav>
+
+  <main>
+
+    <!-- ===========================
+         TAB 1: SEND
+    ============================ -->
+    <section id="tab-send" class="tab-panel active">
+
+      <!-- Step 1: Upload -->
+      <div class="card">
+        <div class="step-label">Step 1 — Upload your file</div>
+        <div class="drop-zone" id="dropZone">
+          <div class="drop-icon">☁️</div>
+          <div class="drop-title">Drag &amp; drop or click to upload</div>
+          <div class="drop-hint">Supports: PDF · DOCX · TXT · PNG · JPG · WEBP · XLSX · CSV</div>
+          <input type="file" id="fileInput" accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.xlsx,.csv"/>
+        </div>
+        <!-- Shows after file is picked -->
+        <div class="file-preview hidden" id="filePreview">
+          <span class="file-icon" id="fileIcon">📄</span>
+          <div class="file-details">
+            <div class="file-name" id="fileName">—</div>
+            <div class="file-size" id="fileSize">—</div>
+          </div>
+          <button class="remove-btn" id="removeFile">✕</button>
+        </div>
+      </div>
+
+      <!-- Step 2: Recipient -->
+      <div class="card">
+        <div class="step-label">Step 2 — Who is this for?</div>
+        <div class="recipient-row">
+          <input type="text" id="recipientName" placeholder="Recipient name (e.g. Priya)"/>
+          <input type="email" id="recipientEmail" placeholder="Email (optional)"/>
+        </div>
+      </div>
+
+      <!-- Step 3: Format -->
+      <div class="card">
+        <div class="step-label">Step 3 — Choose target format</div>
+        <div class="format-grid" id="formatGrid">
+          <button class="fmt-btn" data-fmt="PDF">📄<br/>PDF</button>
+          <button class="fmt-btn" data-fmt="DOCX">📝<br/>DOCX</button>
+          <button class="fmt-btn" data-fmt="TXT">🔤<br/>TXT</button>
+          <button class="fmt-btn" data-fmt="PNG">🖼️<br/>PNG</button>
+          <button class="fmt-btn" data-fmt="JPG">📷<br/>JPG</button>
+          <button class="fmt-btn" data-fmt="WEBP">🌐<br/>WEBP</button>
+          <button class="fmt-btn" data-fmt="XLSX">📊<br/>XLSX</button>
+          <button class="fmt-btn" data-fmt="CSV">📋<br/>CSV</button>
+        </div>
+      </div>
+
+      <!-- Step 4: Bot chat -->
+      <div class="card">
+        <div class="step-label">Or just tell the bot what to do</div>
+        <div class="chat-log" id="chatLog">
+          <div class="bot-msg">
+            <span class="avatar">S</span>
+            <span>Hi! Upload a file above then tell me what to do.<br/>
+            Example: <em>"Convert to PDF and send to Priya"</em></span>
+          </div>
+        </div>
+        <div class="chat-input-row">
+          <input type="text" id="botInput" placeholder='Try: "Send this as a DOCX to Ravi"'/>
+          <button class="btn-send-msg" id="sendBotMsg">Send</button>
+        </div>
+      </div>
+
+      <!-- Send button -->
+      <div class="send-footer">
+        <button class="btn-reset" id="resetBtn">Reset</button>
+        <button class="btn-primary" id="sendBtn">📤 Send File</button>
+      </div>
+
+      <!-- Progress bar (hidden until sending) -->
+      <div class="progress-wrap hidden" id="progressWrap">
+        <div class="progress-bar" id="progressBar"></div>
+        <div class="progress-label" id="progressLabel">Converting...</div>
+      </div>
+
+      <!-- Success message -->
+      <div class="success-box hidden" id="successBox">
+        <div class="success-title">✅ File sent successfully!</div>
+        <div class="success-link-label">Share this link with the recipient:</div>
+        <div class="share-link-row">
+          <input type="text" id="shareLink" readonly/>
+          <button class="btn-copy" id="copyLink">Copy</button>
+        </div>
+      </div>
+
+    </section>
+
+
+    <!-- ===========================
+         TAB 2: RECEIVE
+    ============================ -->
+    <section id="tab-receive" class="tab-panel">
+      <div class="receive-header">
+        <h2>Files shared with you</h2>
+        <button class="btn-refresh" id="refreshFiles">🔄 Refresh</button>
+      </div>
+      <div id="filesList">
+        <div class="empty-state">No files received yet.<br/>Ask someone to send you a file using ShareEasy.</div>
+      </div>
+    </section>
+
+
+    <!-- ===========================
+         TAB 3: HISTORY
+    ============================ -->
+    <section id="tab-history" class="tab-panel">
+      <div class="receive-header">
+        <h2>All transfers</h2>
+        <button class="btn-refresh" id="refreshHistory">🔄 Refresh</button>
+      </div>
+      <div id="historyList">
+        <div class="empty-state">No transfers yet.<br/>Send your first file using the Send tab!</div>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

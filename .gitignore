@@ -1,0 +1,23 @@
+# Don't upload these to GitHub
+
+# Environment variables (contains your API key!)
+.env
+
+# Dependencies
+node_modules/
+
+# Uploaded files (user data)
+uploads/*
+!uploads/.gitkeep
+
+# Converted files (generated files)
+converted/*
+!converted/.gitkeep
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
