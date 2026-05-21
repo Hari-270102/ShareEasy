@@ -293,7 +293,18 @@ async function sendFile() {
     progressLabel.textContent = 'Done!';
 
     if (data.success) {
-      // Show success
+      // Save to this device's local history
+      saveToLocalHistory({
+        shareId      : data.shareId,
+        displayName  : uploadedFileName.replace(/\.[^.]+$/, '') + '.' + selectedFormat.toLowerCase(),
+        convertedFrom: uploadedFileName.split('.').pop().toUpperCase(),
+        convertedTo  : selectedFormat,
+        recipientName: recipientName.value || 'Recipient',
+        recipientEmail: detectedEmail || recipientEmail.value || '',
+        fileSize     : 0,
+        createdAt    : new Date().toISOString(),
+        status       : 'Delivered'
+      });
       setTimeout(() => {
         progressWrap.classList.add('hidden');
         successBox.classList.remove('hidden');
@@ -344,22 +355,34 @@ copyLinkBtn.addEventListener('click', () => {
 document.getElementById('refreshFiles').addEventListener('click', loadFiles);
 document.getElementById('refreshHistory').addEventListener('click', loadFiles);
 
+// ── Local history stored per device in localStorage ──
+function getLocalHistory() {
+  try { return JSON.parse(localStorage.getItem('shareeasy_history') || '[]'); } catch { return []; }
+}
+function saveToLocalHistory(entry) {
+  const history = getLocalHistory();
+  history.unshift(entry);
+  localStorage.setItem('shareeasy_history', JSON.stringify(history.slice(0, 50)));
+}
+
 async function loadFiles() {
+  // History tab — show only THIS device's sent files from localStorage
+  const history = getLocalHistory();
+  if (history.length === 0) {
+    historyList.innerHTML = '<div class="empty-state">No transfers yet.<br/>Send your first file using the Send tab!</div>';
+  } else {
+    historyList.innerHTML = history.map(f => buildFileCard(f)).join('');
+  }
+
+  // Receive tab — still fetches from server (all files available for download)
   try {
     const res   = await fetch('/api/files');
     const files = await res.json();
-
     if (files.length === 0) {
-      filesList.innerHTML   = '<div class="empty-state">No files yet.<br/>Ask someone to send you a file using ShareEasy.</div>';
-      historyList.innerHTML = '<div class="empty-state">No transfers yet.<br/>Send your first file using the Send tab!</div>';
-      return;
+      filesList.innerHTML = '<div class="empty-state">No files yet.<br/>Ask someone to send you a file using ShareEasy.</div>';
+    } else {
+      filesList.innerHTML = files.map(f => buildFileCard(f)).join('');
     }
-
-    // Both receive and history show same list (in a real app you'd filter by recipient)
-    const html = files.map(f => buildFileCard(f)).join('');
-    filesList.innerHTML   = html;
-    historyList.innerHTML = html;
-
   } catch (err) {
     console.error('Could not load files:', err);
   }
