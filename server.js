@@ -75,7 +75,7 @@ let sharedFiles = [];
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 async function geminiBot(message, currentFormat, currentRecipient, currentRecipientEmail) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
   const prompt = `You are ShareEasy's assistant. Users want to convert and send files.
 Your job: extract intent from the user's message and respond with ONLY valid JSON.
