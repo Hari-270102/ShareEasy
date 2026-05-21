@@ -68,8 +68,63 @@ let sharedFiles = [];
 
 
 // ==============================================
-// GEMINI AI BOT
-// Uses Google Gemini to understand natural language.
+// LOCAL KEYWORD BOT (fallback)
+// ==============================================
+
+const FORMAT_MAP = [
+  { keys: ['pdf'],                          format: 'PDF'  },
+  { keys: ['word', 'docx', 'doc'],          format: 'DOCX' },
+  { keys: ['text', 'txt'],                  format: 'TXT'  },
+  { keys: ['png'],                          format: 'PNG'  },
+  { keys: ['jpg', 'jpeg', 'image'],         format: 'JPG'  },
+  { keys: ['webp'],                         format: 'WEBP' },
+  { keys: ['xlsx', 'excel', 'xls'],         format: 'XLSX' },
+  { keys: ['csv', 'spreadsheet'],           format: 'CSV'  },
+];
+
+function localBot(message, currentFormat, currentRecipient, currentRecipientEmail) {
+  const msg   = message.toLowerCase().trim();
+  const words = msg.split(/\s+/);
+
+  let detectedFormat = null;
+  for (const word of words) {
+    for (const entry of FORMAT_MAP) {
+      if (entry.keys.includes(word)) { detectedFormat = entry.format; break; }
+    }
+    if (detectedFormat) break;
+  }
+
+  let detectedEmail = null;
+  const emailMatch = msg.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
+  if (emailMatch) detectedEmail = emailMatch[0];
+
+  let detectedRecipient = null;
+  if (detectedEmail) {
+    detectedRecipient = detectedEmail.split('@')[0].replace(/[._\-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  } else {
+    const m = msg.match(/(?:to|for|send\s+to|share\s+with)\s+([a-z][a-z\s]{1,20}?)(?:\s+(?:as|in|the)|[.,!?]|$)/i);
+    if (m) detectedRecipient = m[1].trim().replace(/\b\w/g, c => c.toUpperCase());
+  }
+
+  const format    = detectedFormat    || currentFormat;
+  const recipient = detectedRecipient || currentRecipient;
+  const recipientEmail = detectedEmail || currentRecipientEmail || null;
+
+  let reply;
+  if (format && (recipient || recipientEmail)) {
+    reply = `Got it! I'll convert to ${format} and send it to ${recipientEmail || recipient}. Click "Send now" to confirm!`;
+  } else if (format) {
+    reply = `Sure, converting to ${format}. Who should I send it to?`;
+  } else if (recipient || recipientEmail) {
+    reply = `I'll send it to ${recipientEmail || recipient}. What format? (PDF, DOCX, TXT, PNG, JPG, XLSX, CSV)`;
+  } else {
+    reply = `Try: "Send this to hari@gmail.com as PDF"`;
+  }
+  return { reply, format, recipient, recipientEmail, suggestedFormat: null };
+}
+
+// ==============================================
+// GEMINI AI BOT (primary, with local fallback)
 // ==============================================
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -152,7 +207,9 @@ app.post('/api/bot', async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error('Gemini error:', err.message);
-    res.json({ reply: "I'm having trouble understanding that right now. Try: \"Send this to hari@gmail.com as PDF\".", format: currentFormat, recipient: currentRecipient, recipientEmail: currentRecipientEmail, suggestedFormat: null });
+    // Fall back to local keyword bot so the app always works
+    const result = localBot(message, currentFormat, currentRecipient, currentRecipientEmail);
+    res.json(result);
   }
 });
 
