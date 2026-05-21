@@ -68,152 +68,59 @@ let sharedFiles = [];
 
 
 // ==============================================
-// SMART LOCAL BOT — keyword detection
-// No internet needed. Works behind any firewall.
-// Switch to Gemini when deploying online.
+// GEMINI AI BOT
+// Uses Google Gemini to understand natural language.
 // ==============================================
 
-// Levenshtein edit distance — counts how many single-character
-// changes (add/remove/replace) it takes to turn string a into b.
-// e.g. "pdd" vs "pdf" = 1 change → close enough to suggest
-function editDistance(a, b) {
-  const m = a.length, n = b.length;
-  const dp = Array.from({ length: m + 1 }, (_, i) =>
-    Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0))
-  );
-  for (let i = 1; i <= m; i++)
-    for (let j = 1; j <= n; j++)
-      dp[i][j] = a[i-1] === b[j-1]
-        ? dp[i-1][j-1]
-        : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
-  return dp[m][n];
-}
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Format definitions — only the REAL canonical keywords here.
-// Fuzzy matching handles all typos automatically.
-const FORMAT_MAP = [
-  { keys: ['pdf'],                          format: 'PDF'  },
-  { keys: ['word', 'docx', 'doc'],          format: 'DOCX' },
-  { keys: ['text', 'txt'],                  format: 'TXT'  },
-  { keys: ['png'],                          format: 'PNG'  },
-  { keys: ['jpg', 'jpeg', 'image'],         format: 'JPG'  },
-  { keys: ['webp'],                         format: 'WEBP' },
-  { keys: ['xlsx', 'excel', 'xls'],         format: 'XLSX' },
-  { keys: ['csv', 'spreadsheet'],           format: 'CSV'  },
-];
+async function geminiBot(message, currentFormat, currentRecipient, currentRecipientEmail) {
+  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
-// Try to match a single word to a format.
-// Returns { format, exact } where exact=false means it was a fuzzy guess.
-function matchFormat(word) {
-  // 1. Exact match first
-  for (const entry of FORMAT_MAP) {
-    if (entry.keys.includes(word)) return { format: entry.format, exact: true };
-  }
-  // 2. Fuzzy match — allow 1 edit for short words (<=4 chars), 2 for longer
-  let best = null, bestDist = Infinity;
-  for (const entry of FORMAT_MAP) {
-    for (const key of entry.keys) {
-      const dist = editDistance(word, key);
-      const maxAllowed = key.length <= 4 ? 1 : 2;
-      if (dist <= maxAllowed && dist < bestDist) {
-        bestDist = dist;
-        best = entry.format;
-      }
-    }
-  }
-  if (best) return { format: best, exact: false };
-  return null;
-}
+  const prompt = `You are ShareEasy's assistant. Users want to convert and send files.
+Your job: extract intent from the user's message and respond with ONLY valid JSON.
 
-function localBot(message, currentFormat = null, currentRecipient = null, pendingConfirm = null, currentRecipientEmail = null) {
-  const msg   = message.toLowerCase().trim();
-  const words = msg.split(/\s+/);
+Context from previous turns:
+- Current format: ${currentFormat || 'not set'}
+- Current recipient name: ${currentRecipient || 'not set'}
+- Current recipient email: ${currentRecipientEmail || 'not set'}
 
-  // ── Handle yes/no confirmation for fuzzy suggestions ──
-  if (pendingConfirm) {
-    if (/^(yes|yeah|yep|y|correct|right|sure|ok|okay)$/i.test(msg)) {
-      const format         = pendingConfirm;
-      const recipient      = currentRecipient;
-      const recipientEmail = currentRecipientEmail;
-      if (format && recipient) {
-        return { reply: `Great! I'll convert to ${format} and send it to ${recipientEmail || recipient}. Click "Send now" to confirm!`, format, recipient, recipientEmail, suggestedFormat: null };
-      }
-      if (format) {
-        return { reply: `Got it, ${format} it is! Who should I send it to?`, format, recipient: null, recipientEmail: currentRecipientEmail, suggestedFormat: null };
-      }
-    }
-    if (/^(no|nope|n|wrong|nah)$/i.test(msg)) {
-      return { reply: `My bad! What format did you want? (PDF, DOCX, TXT, PNG, JPG, XLSX, CSV)`, format: null, recipient: currentRecipient, recipientEmail: currentRecipientEmail, suggestedFormat: null };
-    }
-  }
+Supported formats: PDF, DOCX, TXT, PNG, JPG, WEBP, XLSX, CSV
 
-  // ── Detect format from all words in message ────
-  let detectedFormat = null;
-  let suggestedFormat = null;  // fuzzy guess needing confirmation
+User message: "${message}"
 
-  for (const word of words) {
-    const result = matchFormat(word);
-    if (!result) continue;
-    if (result.exact) { detectedFormat = result.format; break; }
-    if (!suggestedFormat) suggestedFormat = result.format; // keep first fuzzy guess
-  }
+Rules:
+1. Extract the target file format if mentioned (map "word" → DOCX, "excel" → XLSX, "image" → JPG, "text" → TXT).
+2. Extract recipient name and/or email if mentioned.
+3. Keep context from previous turns if the user doesn't change it.
+4. If both format and recipient are known, say you'll convert and send — tell them to click "Send now".
+5. If only format is known, ask who to send it to.
+6. If only recipient is known, ask what format they want.
+7. If neither, ask for both in a friendly way.
+8. Be conversational and friendly, like a helpful assistant.
 
-  // ── Detect recipient email (if typed in chat) ──
-  let detectedEmail = null;
-  const emailMatch = msg.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
-  if (emailMatch) detectedEmail = emailMatch[0];
+Respond with ONLY this JSON (no markdown, no code blocks):
+{
+  "reply": "your friendly message to the user",
+  "format": "PDF" or "DOCX" or "TXT" or "PNG" or "JPG" or "WEBP" or "XLSX" or "CSV" or null,
+  "recipient": "recipient display name" or null,
+  "recipientEmail": "recipient@email.com" or null
+}`;
 
-  // ── Detect recipient name ───────────────────
-  let detectedRecipient = null;
-  // If an email was found, use the part before @ as the display name
-  if (detectedEmail) {
-    detectedRecipient = detectedEmail.split('@')[0].replace(/[._\-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-  } else {
-    const recipientMatch = msg.match(
-      /(?:to|for|send\s+to|share\s+with|send\s+it\s+to|give\s+to)\s+([a-z][a-z\s]{1,20}?)(?:\s+(?:as|in|the|a|an|format)|[.,!?]|$)/i
-    );
-    if (recipientMatch) {
-      detectedRecipient = recipientMatch[1].trim().replace(/\b\w/g, c => c.toUpperCase());
-    }
-  }
+  const result = await model.generateContent(prompt);
+  const text = result.response.text().trim();
 
-  // ── Context-aware fill ────────────────────
-  const allFormatKeys = FORMAT_MAP.flatMap(e => e.keys);
-  const looksLikeName = /^[a-zA-Z]{2,30}$/.test(msg) && !allFormatKeys.includes(msg) && !matchFormat(msg);
-  if (!detectedRecipient && currentFormat && !currentRecipient && looksLikeName) {
-    detectedRecipient = msg.replace(/\b\w/g, c => c.toUpperCase());
-  }
+  // Strip markdown code fences if Gemini wraps in them
+  const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  const data = JSON.parse(cleaned);
 
-  // Merge with remembered context
-  const format         = detectedFormat    || currentFormat;
-  const recipient      = detectedRecipient || currentRecipient;
-  const recipientEmail = detectedEmail     || null;
-
-  // ── If only a fuzzy guess was found, ask for confirmation ──
-  if (!detectedFormat && suggestedFormat) {
-    return {
-      reply: `Did you mean ${suggestedFormat}? Reply "yes" to confirm or "no" to pick a different format.`,
-      format: currentFormat,
-      recipient,
-      recipientEmail,      // carry email through so it's not lost on "yes"
-      suggestedFormat
-    };
-  }
-
-  // ── Build friendly reply ───────────────────
-  let reply;
-  if (format && recipient) {
-    const dest = recipientEmail || recipient;
-    reply = `Got it! I'll convert the file to ${format} and send it to ${dest}. Click "Send now" to confirm!`;
-  } else if (format) {
-    reply = `Sure, I'll convert the file to ${format}. Who should I send it to?`;
-  } else if (recipient) {
-    reply = `I'll send it to ${recipient}. What format would you like? (PDF, DOCX, TXT, PNG, JPG, XLSX, CSV)`;
-  } else {
-    reply = `I didn't catch the format or recipient. Try: "Send this to hari@gmail.com as PDF".`;
-  }
-
-  return { reply, format, recipient, recipientEmail, suggestedFormat: null };
+  return {
+    reply: data.reply || "I didn't quite get that. Try: \"Send this to hari@gmail.com as PDF\".",
+    format: data.format || currentFormat || null,
+    recipient: data.recipient || currentRecipient || null,
+    recipientEmail: data.recipientEmail || currentRecipientEmail || null,
+    suggestedFormat: null
+  };
 }
 
 
@@ -234,14 +141,19 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
   });
 });
 
-// ── 2. Bot chat (smart local keyword detection) ──
-app.post('/api/bot', (req, res) => {
-  const { message, currentFormat = null, currentRecipient = null, pendingConfirm = null, currentRecipientEmail = null } = req.body;
+// ── 2. Bot chat (Gemini AI) ──
+app.post('/api/bot', async (req, res) => {
+  const { message, currentFormat = null, currentRecipient = null, currentRecipientEmail = null } = req.body;
   if (!message || !message.trim()) {
     return res.json({ reply: 'Please type a message first!', format: null, recipient: null, recipientEmail: null, suggestedFormat: null });
   }
-  const result = localBot(message, currentFormat, currentRecipient, pendingConfirm, currentRecipientEmail);
-  res.json(result);
+  try {
+    const result = await geminiBot(message, currentFormat, currentRecipient, currentRecipientEmail);
+    res.json(result);
+  } catch (err) {
+    console.error('Gemini error:', err.message);
+    res.json({ reply: "I'm having trouble understanding that right now. Try: \"Send this to hari@gmail.com as PDF\".", format: currentFormat, recipient: currentRecipient, recipientEmail: currentRecipientEmail, suggestedFormat: null });
+  }
 });
 
 // ── 3. Convert file and create share link ─────
