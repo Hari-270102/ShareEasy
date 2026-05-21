@@ -332,6 +332,17 @@ main { max-width: 640px; margin: 0 auto; padding: 20px 16px 60px; }
   margin-bottom: 16px;
 }
 .receive-header h2 { font-size: 17px; font-weight: 600; }
+.receive-hint { color: #666; font-size: 14px; margin-bottom: 12px; }
+.receive-input-row { display: flex; gap: 8px; }
+.receive-input-row input {
+  flex: 1;
+  padding: 10px 14px;
+  border: 1px solid #e0dfd9;
+  border-radius: 8px;
+  font-size: 14px;
+  outline: none;
+}
+.receive-input-row input:focus { border-color: #b5b0a0; }
 .btn-refresh {
   padding: 7px 14px;
   background: #fff;

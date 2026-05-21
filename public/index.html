@@ -121,11 +121,15 @@
     ============================ -->
     <section id="tab-receive" class="tab-panel">
       <div class="receive-header">
-        <h2>Files shared with you</h2>
-        <button class="btn-refresh" id="refreshFiles">🔄 Refresh</button>
+        <h2>Received a file?</h2>
       </div>
-      <div id="filesList">
-        <div class="empty-state">No files received yet.<br/>Ask someone to send you a file using ShareEasy.</div>
+      <div class="receive-lookup">
+        <p class="receive-hint">Paste the share link you received via email or chat:</p>
+        <div class="receive-input-row">
+          <input type="text" id="receiveLinkInput" placeholder="https://shareeasy-uvia.onrender.com/share/..." />
+          <button class="btn-primary" id="receiveLookupBtn">Open File</button>
+        </div>
+        <div id="receiveResult"></div>
       </div>
     </section>
 

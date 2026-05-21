@@ -53,8 +53,8 @@ document.querySelectorAll('.tab').forEach(tab => {
     // Activate clicked tab
     tab.classList.add('active');
     document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
-    // Load data when switching to receive/history
-    if (tab.dataset.tab === 'receive' || tab.dataset.tab === 'history') {
+    // Load history when switching to history tab
+    if (tab.dataset.tab === 'history') {
       loadFiles();
     }
   });
@@ -352,8 +352,26 @@ copyLinkBtn.addEventListener('click', () => {
 // ==============================================
 // RECEIVE / HISTORY — LOAD FILES
 // ==============================================
-document.getElementById('refreshFiles').addEventListener('click', loadFiles);
 document.getElementById('refreshHistory').addEventListener('click', loadFiles);
+
+// ── Receive tab — share link lookup ──────────────────────
+document.getElementById('receiveLookupBtn').addEventListener('click', openShareLink);
+document.getElementById('receiveLinkInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') openShareLink();
+});
+
+function openShareLink() {
+  const val = document.getElementById('receiveLinkInput').value.trim();
+  if (!val) return;
+  // Accept full URL or just the shareId
+  const match = val.match(/\/share\/([a-f0-9\-]{36})/) || val.match(/^([a-f0-9\-]{36})$/);
+  if (match) {
+    window.open('/share/' + match[1], '_blank');
+  } else {
+    document.getElementById('receiveResult').innerHTML =
+      '<p style="color:red;margin-top:8px">Invalid link. Paste the full share link from your email.</p>';
+  }
+}
 
 // ── Local history stored per device in localStorage ──
 function getLocalHistory() {
@@ -374,18 +392,7 @@ async function loadFiles() {
     historyList.innerHTML = history.map(f => buildFileCard(f)).join('');
   }
 
-  // Receive tab — still fetches from server (all files available for download)
-  try {
-    const res   = await fetch('/api/files');
-    const files = await res.json();
-    if (files.length === 0) {
-      filesList.innerHTML = '<div class="empty-state">No files yet.<br/>Ask someone to send you a file using ShareEasy.</div>';
-    } else {
-      filesList.innerHTML = files.map(f => buildFileCard(f)).join('');
-    }
-  } catch (err) {
-    console.error('Could not load files:', err);
-  }
+
 }
 
 function buildFileCard(f) {
