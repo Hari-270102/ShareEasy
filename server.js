@@ -55,11 +55,16 @@ const upload = multer({
 
 // ── Email transporter (Gmail) ───────────────────
 const mailer = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false,
+  requireTLS: true,
   auth: {
     user: process.env.EMAIL_FROM,
     pass: process.env.EMAIL_PASS
-  }
+  },
+  connectionTimeout: 30000,
+  socketTimeout: 30000
 });
 
 // ── In-memory list of shared files ───────────
