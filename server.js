@@ -22,7 +22,7 @@ const { v4: uuidv4 } = require('uuid');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 // NOTE: Gemini is kept for future use (when deploying online).
 // Currently using local keyword detection (works without internet).
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 const cors       = require('cors');
 
 const app  = express();
@@ -53,19 +53,8 @@ const upload = multer({
   limits: { fileSize: 50 * 1024 * 1024 } // max 50MB
 });
 
-// ── Email transporter (Gmail) ───────────────────
-const mailer = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 465,
-  secure: true,
-  family: 4,
-  auth: {
-    user: process.env.EMAIL_FROM,
-    pass: process.env.EMAIL_PASS
-  },
-  connectionTimeout: 30000,
-  socketTimeout: 30000
-});
+// ── Resend email client ───────────────────
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // ── In-memory list of shared files ───────────
 // (works for local use; for production use a database)
@@ -258,17 +247,18 @@ app.post('/api/convert-and-share', async (req, res) => {
 
     // ── Send email with file attached (if recipient email provided) ──
     let emailStatus = 'no_email';
-    if (recipientEmail && process.env.EMAIL_FROM && process.env.EMAIL_PASS) {
+    if (recipientEmail && process.env.RESEND_API_KEY) {
       try {
-        await mailer.sendMail({
-          from   : `"ShareEasy" <${process.env.EMAIL_FROM}>`,
-          to     : recipientEmail,
+        const fileBuffer = fs.readFileSync(outPath);
+        const { error } = await resend.emails.send({
+          from   : 'ShareEasy <onboarding@resend.dev>',
+          to     : [recipientEmail],
           subject: `${recipientName || 'Someone'} shared a file with you via ShareEasy`,
           html   : `
             <div style="font-family:sans-serif;max-width:520px;margin:0 auto">
               <h2 style="color:#1a1a18">⚡ ShareEasy</h2>
               <p>Hi <strong>${recipientName || 'there'}</strong>,</p>
-              <p><strong>${entry.recipientName}</strong> has shared a converted file with you.</p>
+              <p>Someone has shared a converted file with you.</p>
               <table style="background:#f5f4f0;border-radius:8px;padding:12px 16px;margin:16px 0;width:100%">
                 <tr><td><strong>File:</strong></td><td>${entry.displayName}</td></tr>
                 <tr><td><strong>Converted:</strong></td><td>${entry.convertedFrom} → ${entry.convertedTo}</td></tr>
@@ -279,11 +269,16 @@ app.post('/api/convert-and-share', async (req, res) => {
             </div>`,
           attachments: [{
             filename: entry.displayName,
-            path    : outPath
+            content : fileBuffer
           }]
         });
-        emailStatus = 'sent';
-        console.log(`  ✉️  Email sent to ${recipientEmail}`);
+        if (error) {
+          console.error('Email error:', error.message);
+          emailStatus = 'failed';
+        } else {
+          emailStatus = 'sent';
+          console.log(`  ✉️  Email sent to ${recipientEmail}`);
+        }
       } catch (mailErr) {
         console.error('Email error:', mailErr.message);
         emailStatus = 'failed';
