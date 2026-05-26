@@ -530,7 +530,7 @@ async function textToDocx(text, outputPath) {
 // Creates a PDF from plain text (used by DOCX→PDF and TXT→PDF)
 function createPDF(text, outputPath) {
   return new Promise((resolve, reject) => {
-    const doc    = new PDFDoc({ margin: 60 });
+    const doc    = new PDFDoc({ margin: 20 });
     const stream = fs.createWriteStream(outputPath);
     doc.pipe(stream);
     doc.font('Helvetica').fontSize(12).text(text, { lineGap: 5 });
@@ -610,7 +610,8 @@ const BASE_URL = process.env.RENDER_EXTERNAL_URL || 'https://shareeasy-uvia.onre
 if (process.env.TELEGRAM_TOKEN) {
   const tgBot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
-  const userState = {};  // chatId → { files[], step, timer }
+  const userState  = {};  // chatId → { files[], step, timer }
+  const userHistory = {};  // userId → [{ fileId, fileName, date }]
 
   // ── 4-per-row format buttons ──
   const FORMAT_BUTTONS = {
@@ -804,9 +805,14 @@ if (process.env.TELEGRAM_TOKEN) {
         createdAt: new Date().toISOString(), status: 'Ready', recipientName: 'Telegram'
       });
       const shareLink = `${BASE_URL}/share/${shareId}`;
-      await tgBot.sendDocument(chatId, outPath, {}, { filename: outFileName });
+      const sentMsg = await tgBot.sendDocument(chatId, outPath, {}, { filename: outFileName });
+      if (sentMsg && sentMsg.document) {
+        if (!userHistory[chatId]) userHistory[chatId] = [];
+        userHistory[chatId].unshift({ fileId: sentMsg.document.file_id, fileName: outFileName, date: Date.now() });
+        if (userHistory[chatId].length > 10) userHistory[chatId].pop();
+      }
       tgBot.sendMessage(chatId,
-        `✅ *Converted to ${targetFormat}!*\n\n🔗 *Share link (24h):*\n${shareLink}\n\n_Paste this anywhere — anyone can download, no app needed._`,
+        `✅ *Converted to ${targetFormat}!*\n\n🔗 *Share link (24h):*\n${shareLink}\n\n💡 _In any Telegram chat, type_ @ShareEasyFileConverterBot _to share this file instantly!_`,
         { parse_mode: 'Markdown', disable_web_page_preview: true }
       );
       delete userState[chatId];
@@ -852,9 +858,14 @@ if (process.env.TELEGRAM_TOKEN) {
         createdAt: new Date().toISOString(), status: 'Ready', recipientName: 'Telegram'
       });
       const zipShareLink = `${BASE_URL}/share/${zipShareId}`;
-      await tgBot.sendDocument(chatId, zipPath, {}, { filename: 'shareeasy-files.zip' });
+      const zipMsg = await tgBot.sendDocument(chatId, zipPath, {}, { filename: 'shareeasy-files.zip' });
+      if (zipMsg && zipMsg.document) {
+        if (!userHistory[chatId]) userHistory[chatId] = [];
+        userHistory[chatId].unshift({ fileId: zipMsg.document.file_id, fileName: 'shareeasy-files.zip', date: Date.now() });
+        if (userHistory[chatId].length > 10) userHistory[chatId].pop();
+      }
       tgBot.sendMessage(chatId,
-        `✅ *Zipped ${state.files.length} files!*\n\n🔗 *Share link (24h):*\n${zipShareLink}\n\n_Paste this anywhere — anyone can download, no app needed._`,
+        `✅ *Zipped ${state.files.length} files!*\n\n🔗 *Share link (24h):*\n${zipShareLink}\n\n💡 _In any Telegram chat, type_ @ShareEasyFileConverterBot _to share this file instantly!_`,
         { parse_mode: 'Markdown', disable_web_page_preview: true }
       );
       delete userState[chatId];
@@ -928,9 +939,14 @@ if (process.env.TELEGRAM_TOKEN) {
         createdAt: new Date().toISOString(), status: 'Ready', recipientName: 'Telegram'
       });
       const shareLink = `${BASE_URL}/share/${shareId}`;
-      await tgBot.sendDocument(chatId, txtPath, {}, { filename: txtName });
+      const ocrMsg = await tgBot.sendDocument(chatId, txtPath, {}, { filename: txtName });
+      if (ocrMsg && ocrMsg.document) {
+        if (!userHistory[chatId]) userHistory[chatId] = [];
+        userHistory[chatId].unshift({ fileId: ocrMsg.document.file_id, fileName: txtName, date: Date.now() });
+        if (userHistory[chatId].length > 10) userHistory[chatId].pop();
+      }
       tgBot.sendMessage(chatId,
-        `🔗 *Share link (24h):*\n${shareLink}`,
+        `🔗 *Share link (24h):*\n${shareLink}\n\n💡 _In any Telegram chat, type_ @ShareEasyFileConverterBot _to share this file!_`,
         { parse_mode: 'Markdown', disable_web_page_preview: true }
       );
       delete userState[chatId];
@@ -940,6 +956,39 @@ if (process.env.TELEGRAM_TOKEN) {
       delete userState[chatId];
     }
   }
+
+  // ── Inline mode: share converted files from any Telegram chat ──
+  tgBot.on('inline_query', async (query) => {
+    const userId  = query.from.id;
+    const search  = query.query.toLowerCase().trim();
+    const history = userHistory[userId] || [];
+    const filtered = search
+      ? history.filter(f => f.fileName.toLowerCase().includes(search))
+      : history;
+
+    if (filtered.length === 0) {
+      await tgBot.answerInlineQuery(query.id, [{
+        type: 'article',
+        id: 'empty',
+        title: history.length === 0 ? '📭 No converted files yet' : `🔍 No files matching "${search}"`,
+        description: history.length === 0
+          ? 'Convert a file first — send any file to this bot'
+          : 'Try a different search term',
+        input_message_content: { message_text: '👉 Use @ShareEasyFileConverterBot to convert and share files!' }
+      }], { cache_time: 0 });
+      return;
+    }
+
+    const results = filtered.map((item, idx) => ({
+      type: 'document',
+      id: String(idx),
+      title: item.fileName,
+      document_file_id: item.fileId,
+      description: `Converted ${new Date(item.date).toLocaleString()}`
+    }));
+
+    await tgBot.answerInlineQuery(query.id, results, { cache_time: 0 });
+  });
 
   console.log('🤖 Telegram bot is active!');
 }
