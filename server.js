@@ -141,14 +141,13 @@ function localBot(message, currentFormat, currentRecipient, currentRecipientEmai
 }
 
 // ==============================================
-// GEMINI AI BOT (primary, with local fallback)
+// GROQ AI BOT (primary, with local fallback)
 // ==============================================
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const Groq = require('groq-sdk');
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-async function geminiBot(message, currentFormat, currentRecipient, currentRecipientEmail) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-
+async function groqBot(message, currentFormat, currentRecipient, currentRecipientEmail) {
   const prompt = `You are ShareEasy's assistant. Users want to convert and send files.
 Your job: extract intent from the user's message and respond with ONLY valid JSON.
 
@@ -179,17 +178,20 @@ Respond with ONLY this JSON (no markdown, no code blocks):
   "recipientEmail": "recipient@email.com" or null
 }`;
 
-  const result = await model.generateContent(prompt);
-  const text = result.response.text().trim();
+  const completion = await groq.chat.completions.create({
+    model   : 'llama-3.3-70b-versatile',
+    messages: [{ role: 'user', content: prompt }],
+    temperature: 0.3
+  });
 
-  // Strip markdown code fences if Gemini wraps in them
+  const text    = completion.choices[0].message.content.trim();
   const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
-  const data = JSON.parse(cleaned);
+  const data    = JSON.parse(cleaned);
 
   return {
-    reply: data.reply || "I didn't quite get that. Try: \"Send this to hari@gmail.com as PDF\".",
-    format: data.format || currentFormat || null,
-    recipient: data.recipient || currentRecipient || null,
+    reply        : data.reply || "I didn't quite get that. Try: \"Send this to hari@gmail.com as PDF\".",
+    format       : data.format || currentFormat || null,
+    recipient    : data.recipient || currentRecipient || null,
     recipientEmail: data.recipientEmail || currentRecipientEmail || null,
     suggestedFormat: null
   };
@@ -220,7 +222,7 @@ app.post('/api/bot', async (req, res) => {
     return res.json({ reply: 'Please type a message first!', format: null, recipient: null, recipientEmail: null, suggestedFormat: null });
   }
   try {
-    const result = await geminiBot(message, currentFormat, currentRecipient, currentRecipientEmail);
+    const result = await groqBot(message, currentFormat, currentRecipient, currentRecipientEmail);
     res.json(result);
   } catch (err) {
     console.error('Gemini error:', err.message);
