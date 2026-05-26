@@ -597,6 +597,162 @@ function spreadsheetToPDF(rows, outputPath) {
 
 
 // ==============================================
+// TELEGRAM BOT
+// ==============================================
+
+const TelegramBot = require('node-telegram-bot-api');
+const axios       = require('axios');
+
+if (process.env.TELEGRAM_TOKEN) {
+  const tgBot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
+
+  // Per-user state: what file they sent and what format they want
+  const userState = {};
+
+  const FORMAT_BUTTONS = {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '📄 PDF',  callback_data: 'fmt_PDF'  }, { text: '📝 DOCX', callback_data: 'fmt_DOCX' }, { text: '📃 TXT',  callback_data: 'fmt_TXT'  }],
+        [{ text: '🖼 PNG',  callback_data: 'fmt_PNG'  }, { text: '🖼 JPG',  callback_data: 'fmt_JPG'  }, { text: '🖼 WEBP', callback_data: 'fmt_WEBP' }],
+        [{ text: '📊 XLSX', callback_data: 'fmt_XLSX' }, { text: '📊 CSV',  callback_data: 'fmt_CSV'  }]
+      ]
+    }
+  };
+
+  // ── /start command ──
+  tgBot.onText(/\/start/, (msg) => {
+    tgBot.sendMessage(msg.chat.id,
+      `⚡ *Welcome to ShareEasy File Converter!*\n\n` +
+      `Send me any file and I'll convert it to your chosen format instantly.\n\n` +
+      `*Supported formats:*\n` +
+      `📄 PDF • 📝 DOCX • 📃 TXT\n` +
+      `🖼 PNG • JPG • WEBP\n` +
+      `📊 XLSX • CSV\n\n` +
+      `Just send a file to get started!`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  // ── /help command ──
+  tgBot.onText(/\/help/, (msg) => {
+    tgBot.sendMessage(msg.chat.id,
+      `*How to use ShareEasy:*\n\n` +
+      `1️⃣ Send any file (PDF, Word, image, spreadsheet)\n` +
+      `2️⃣ Tap the format you want to convert to\n` +
+      `3️⃣ Receive the converted file instantly!\n\n` +
+      `You can also type the format name in the caption when sending the file.\n` +
+      `Example: send a JPG with caption "convert to PDF"`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  // ── Handle incoming files ──
+  async function handleTelegramFile(msg, fileId, originalName) {
+    const chatId = msg.chat.id;
+    userState[chatId] = { fileId, originalName, step: 'awaiting_format' };
+
+    // Check caption for format hint
+    const caption = (msg.caption || '').toLowerCase();
+    const fmtMatch = ['pdf','docx','doc','txt','png','jpg','jpeg','webp','xlsx','csv','excel','word']
+      .find(f => caption.includes(f));
+
+    if (fmtMatch) {
+      const fmt = { doc: 'DOCX', docx: 'DOCX', jpeg: 'JPG', excel: 'XLSX', word: 'DOCX' }[fmtMatch] || fmtMatch.toUpperCase();
+      await convertAndSendTelegram(chatId, fmt);
+    } else {
+      tgBot.sendMessage(chatId,
+        `✅ Got *${originalName}*!\n\nWhat format would you like to convert it to?`,
+        { parse_mode: 'Markdown', ...FORMAT_BUTTONS }
+      );
+    }
+  }
+
+  tgBot.on('document', async (msg) => {
+    const file = msg.document;
+    await handleTelegramFile(msg, file.file_id, file.file_name || 'file');
+  });
+
+  tgBot.on('photo', async (msg) => {
+    const photo = msg.photo[msg.photo.length - 1]; // highest resolution
+    await handleTelegramFile(msg, photo.file_id, 'photo.jpg');
+  });
+
+  // ── Handle format button taps ──
+  tgBot.on('callback_query', async (query) => {
+    const chatId = query.message.chat.id;
+    const format = query.data.replace('fmt_', '');
+    await tgBot.answerCallbackQuery(query.id);
+    await convertAndSendTelegram(chatId, format);
+  });
+
+  // ── Handle text messages (format typed as text) ──
+  tgBot.on('message', async (msg) => {
+    if (msg.document || msg.photo || !msg.text) return;
+    if (msg.text.startsWith('/')) return;
+
+    const chatId = msg.chat.id;
+    const state  = userState[chatId];
+    if (!state || state.step !== 'awaiting_format') {
+      tgBot.sendMessage(chatId, 'Please send a file first, then tell me the format!');
+      return;
+    }
+
+    const txt = msg.text.toLowerCase();
+    const fmtMap = { pdf:'PDF', docx:'DOCX', doc:'DOCX', word:'DOCX', txt:'TXT', text:'TXT', png:'PNG', jpg:'JPG', jpeg:'JPG', webp:'WEBP', xlsx:'XLSX', excel:'XLSX', csv:'CSV' };
+    const matched = Object.keys(fmtMap).find(k => txt.includes(k));
+    if (matched) {
+      await convertAndSendTelegram(chatId, fmtMap[matched]);
+    } else {
+      tgBot.sendMessage(chatId, 'Please choose a format:', FORMAT_BUTTONS);
+    }
+  });
+
+  // ── Core: download, convert, send back ──
+  async function convertAndSendTelegram(chatId, targetFormat) {
+    const state = userState[chatId];
+    if (!state) {
+      tgBot.sendMessage(chatId, 'Please send a file first!');
+      return;
+    }
+
+    tgBot.sendMessage(chatId, `⏳ Converting to ${targetFormat}...`);
+
+    try {
+      // Download file from Telegram
+      const fileInfo  = await tgBot.getFile(state.fileId);
+      const fileUrl   = `https://api.telegram.org/file/bot${process.env.TELEGRAM_TOKEN}/${fileInfo.file_path}`;
+      const response  = await axios.get(fileUrl, { responseType: 'arraybuffer' });
+
+      const fromExt   = path.extname(state.originalName).replace('.', '').toLowerCase() || 'jpg';
+      const inputId   = uuidv4();
+      const inputPath = path.join('uploads', inputId + '.' + fromExt);
+      fs.writeFileSync(inputPath, response.data);
+
+      const outExt    = targetFormat.toLowerCase();
+      const shareId   = uuidv4();
+      const outPath   = path.join('converted', shareId + '.' + outExt);
+      const baseName  = path.basename(state.originalName, path.extname(state.originalName));
+
+      await convertFile(inputPath, outPath, fromExt, outExt);
+
+      const outFileName = baseName + '.' + outExt;
+      await tgBot.sendDocument(chatId, outPath, {}, { filename: outFileName });
+      tgBot.sendMessage(chatId, `✅ Done! Your file has been converted to *${targetFormat}*.\n\nSend another file to convert again!`, { parse_mode: 'Markdown' });
+
+      // Cleanup input file
+      fs.unlink(inputPath, () => {});
+      delete userState[chatId];
+
+    } catch (err) {
+      console.error('Telegram conversion error:', err.message);
+      tgBot.sendMessage(chatId, `❌ Conversion failed: ${err.message}\n\nPlease try again with a different file.`);
+    }
+  }
+
+  console.log('🤖 Telegram bot is active!');
+}
+
+// ==============================================
 // START THE SERVER
 // ==============================================
 app.listen(PORT, () => {
@@ -606,3 +762,4 @@ app.listen(PORT, () => {
   console.log(`  👉  Open browser → http://localhost:${PORT}`);
   console.log('  Press Ctrl + C to stop.\n');
 });
+
