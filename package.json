@@ -9,6 +9,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.20.0",
     "@google/generative-ai": "^0.24.1",
+    "archiver": "^8.0.0",
     "axios": "^1.16.1",
     "cors": "^2.8.5",
     "docx": "^9.6.1",

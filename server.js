@@ -602,150 +602,292 @@ function spreadsheetToPDF(rows, outputPath) {
 
 const TelegramBot = require('node-telegram-bot-api');
 const axios       = require('axios');
+const archiver    = require('archiver');
 
 if (process.env.TELEGRAM_TOKEN) {
   const tgBot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
-  // Per-user state: what file they sent and what format they want
-  const userState = {};
+  const userState       = {};  // chatId → { files[], step, timer, outPath, outFileName }
+  const registeredUsers = {};  // username → chatId
 
+  // ── Compact 2-row format buttons ──
   const FORMAT_BUTTONS = {
     reply_markup: {
       inline_keyboard: [
-        [{ text: '📄 PDF',  callback_data: 'fmt_PDF'  }, { text: '📝 DOCX', callback_data: 'fmt_DOCX' }, { text: '📃 TXT',  callback_data: 'fmt_TXT'  }],
-        [{ text: '🖼 PNG',  callback_data: 'fmt_PNG'  }, { text: '🖼 JPG',  callback_data: 'fmt_JPG'  }, { text: '🖼 WEBP', callback_data: 'fmt_WEBP' }],
-        [{ text: '📊 XLSX', callback_data: 'fmt_XLSX' }, { text: '📊 CSV',  callback_data: 'fmt_CSV'  }]
+        [
+          { text: '📄 PDF',   callback_data: 'fmt_PDF'  },
+          { text: '📝 Word',  callback_data: 'fmt_DOCX' },
+          { text: '📃 Text',  callback_data: 'fmt_TXT'  },
+          { text: '🖼 PNG',   callback_data: 'fmt_PNG'  }
+        ],
+        [
+          { text: '🖼 JPG',   callback_data: 'fmt_JPG'  },
+          { text: '🌐 WebP',  callback_data: 'fmt_WEBP' },
+          { text: '📊 Excel', callback_data: 'fmt_XLSX' },
+          { text: '📊 CSV',   callback_data: 'fmt_CSV'  }
+        ]
       ]
     }
   };
 
-  // ── /start command ──
+  const MULTI_BUTTONS = {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '📦 ZIP all files',       callback_data: 'multi_ZIP'  },
+          { text: '📄 Convert all to PDF',  callback_data: 'multi_PDF'  }
+        ],
+        [
+          { text: '📝 Convert all to Word', callback_data: 'multi_DOCX' },
+          { text: '📃 Convert all to Text', callback_data: 'multi_TXT'  }
+        ]
+      ]
+    }
+  };
+
+  // ── /start ──
   tgBot.onText(/\/start/, (msg) => {
+    if (msg.from.username) registeredUsers[msg.from.username.toLowerCase()] = msg.chat.id;
     tgBot.sendMessage(msg.chat.id,
-      `⚡ *Welcome to ShareEasy File Converter!*\n\n` +
-      `Send me any file and I'll convert it to your chosen format instantly.\n\n` +
-      `*Supported formats:*\n` +
-      `📄 PDF • 📝 DOCX • 📃 TXT\n` +
-      `🖼 PNG • JPG • WEBP\n` +
-      `📊 XLSX • CSV\n\n` +
-      `Just send a file to get started!`,
+      `⚡ *Welcome to ShareEasy — AI File Converter!*\n\n` +
+      `I convert files between formats instantly and can send them to your contacts.\n\n` +
+      `*How to use:*\n` +
+      `📎 Send any file (or multiple files at once!)\n` +
+      `💬 Tell me what to do — tap a button or just type naturally:\n\n` +
+      `_"convert to PDF"_\n` +
+      `_"send to @hari as Word doc"_\n` +
+      `_"zip all and send to @priya"_\n\n` +
+      `*Supported:* PDF • Word • TXT • PNG • JPG • WebP • Excel • CSV • ZIP\n\n` +
+      `Send a file to get started! 🚀`,
       { parse_mode: 'Markdown' }
     );
   });
 
-  // ── /help command ──
+  // ── /help ──
   tgBot.onText(/\/help/, (msg) => {
     tgBot.sendMessage(msg.chat.id,
-      `*How to use ShareEasy:*\n\n` +
-      `1️⃣ Send any file (PDF, Word, image, spreadsheet)\n` +
-      `2️⃣ Tap the format you want to convert to\n` +
-      `3️⃣ Receive the converted file instantly!\n\n` +
-      `You can also type the format name in the caption when sending the file.\n` +
-      `Example: send a JPG with caption "convert to PDF"`,
+      `*ShareEasy Help*\n\n` +
+      `*Single file:* Send any file → pick format → get converted file\n\n` +
+      `*Multiple files:* Send several files at once → ZIP or convert all\n\n` +
+      `*Send to someone:* After conversion, type their @username\n` +
+      `_(They must have started this bot once)_\n\n` +
+      `*Natural language works:*\n` +
+      `• _"convert to PDF"_\n` +
+      `• _"make it a Word doc"_\n` +
+      `• _"zip all and forward to @hari"_`,
       { parse_mode: 'Markdown' }
     );
   });
 
-  // ── Handle incoming files ──
+  // ── Collect incoming files with 3s window ──
   async function handleTelegramFile(msg, fileId, originalName) {
     const chatId = msg.chat.id;
-    userState[chatId] = { fileId, originalName, step: 'awaiting_format' };
-
-    // Check caption for format hint
     const caption = (msg.caption || '').toLowerCase();
-    const fmtMatch = ['pdf','docx','doc','txt','png','jpg','jpeg','webp','xlsx','csv','excel','word']
-      .find(f => caption.includes(f));
+    const fmtAlias = { doc:'DOCX', docx:'DOCX', jpeg:'JPG', excel:'XLSX', word:'DOCX' };
+    const fmtKeys  = ['pdf','docx','doc','txt','png','jpg','jpeg','webp','xlsx','csv','excel','word'];
+    const capFmt   = fmtKeys.find(f => caption.includes(f));
 
-    if (fmtMatch) {
-      const fmt = { doc: 'DOCX', docx: 'DOCX', jpeg: 'JPG', excel: 'XLSX', word: 'DOCX' }[fmtMatch] || fmtMatch.toUpperCase();
-      await convertAndSendTelegram(chatId, fmt);
-    } else {
-      tgBot.sendMessage(chatId,
-        `✅ Got *${originalName}*!\n\nWhat format would you like to convert it to?`,
-        { parse_mode: 'Markdown', ...FORMAT_BUTTONS }
-      );
+    if (!userState[chatId] || !['collecting'].includes(userState[chatId].step)) {
+      userState[chatId] = { files: [], step: 'collecting', timer: null };
     }
+
+    userState[chatId].files.push({ fileId, originalName });
+    clearTimeout(userState[chatId].timer);
+
+    userState[chatId].timer = setTimeout(async () => {
+      const state = userState[chatId];
+      if (!state || state.step !== 'collecting') return;
+      const count = state.files.length;
+
+      if (count === 1) {
+        userState[chatId].step = 'awaiting_format';
+        if (capFmt) {
+          const fmt = fmtAlias[capFmt] || capFmt.toUpperCase();
+          await convertAndSendTelegram(chatId, fmt);
+        } else {
+          tgBot.sendMessage(chatId,
+            `✨ Got *${state.files[0].originalName}*!\n\n` +
+            `What should I convert it to? Tap a format below or just type —\n` +
+            `_"convert to PDF"_, _"make it a Word doc"_, anything works!`,
+            { parse_mode: 'Markdown', ...FORMAT_BUTTONS }
+          );
+        }
+      } else {
+        userState[chatId].step = 'awaiting_multi_action';
+        tgBot.sendMessage(chatId,
+          `✨ Got *${count} files*! What should I do?\n\n` +
+          `You can ZIP them all together or convert everything to the same format.\n` +
+          `_Or just type: "zip all", "convert all to PDF", "send to @hari"_`,
+          { parse_mode: 'Markdown', ...MULTI_BUTTONS }
+        );
+      }
+    }, 3000);
   }
 
-  tgBot.on('document', async (msg) => {
-    const file = msg.document;
-    await handleTelegramFile(msg, file.file_id, file.file_name || 'file');
-  });
+  tgBot.on('document', (msg) => handleTelegramFile(msg, msg.document.file_id, msg.document.file_name || 'file'));
+  tgBot.on('photo',    (msg) => handleTelegramFile(msg, msg.photo[msg.photo.length-1].file_id, 'photo.jpg'));
 
-  tgBot.on('photo', async (msg) => {
-    const photo = msg.photo[msg.photo.length - 1]; // highest resolution
-    await handleTelegramFile(msg, photo.file_id, 'photo.jpg');
-  });
-
-  // ── Handle format button taps ──
+  // ── Button taps ──
   tgBot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
-    const format = query.data.replace('fmt_', '');
     await tgBot.answerCallbackQuery(query.id);
-    await convertAndSendTelegram(chatId, format);
+    if (query.data.startsWith('fmt_'))   await convertAndSendTelegram(chatId, query.data.replace('fmt_', ''));
+    else if (query.data === 'multi_ZIP') await zipAndSendTelegram(chatId);
+    else if (query.data.startsWith('multi_')) await convertAllAndSendTelegram(chatId, query.data.replace('multi_', ''));
   });
 
-  // ── Handle text messages (format typed as text) ──
+  // ── Text messages ──
   tgBot.on('message', async (msg) => {
     if (msg.document || msg.photo || !msg.text) return;
     if (msg.text.startsWith('/')) return;
-
     const chatId = msg.chat.id;
     const state  = userState[chatId];
-    if (!state || state.step !== 'awaiting_format') {
-      tgBot.sendMessage(chatId, 'Please send a file first, then tell me the format!');
+    const txt    = msg.text.toLowerCase().trim();
+
+    if (state && state.step === 'awaiting_recipient') {
+      if (txt === 'skip' || txt === 'no') {
+        delete userState[chatId];
+        tgBot.sendMessage(chatId, '👍 All done! Send another file anytime.');
+        return;
+      }
+      const username = txt.replace(/^@/, '');
+      const recipientChatId = registeredUsers[username];
+      if (!recipientChatId) {
+        tgBot.sendMessage(chatId,
+          `❌ *@${username}* hasn't started ShareEasy yet.\n\nAsk them to open the bot and tap *Start* once.\nOr type *skip* to finish.`,
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+      try {
+        await tgBot.sendDocument(recipientChatId, state.outPath, {},
+          { filename: state.outFileName, caption: `📁 *${msg.from.first_name || 'Someone'}* sent you a file via ShareEasy!`, parse_mode: 'Markdown' }
+        );
+        tgBot.sendMessage(chatId, `✅ Sent to *@${username}* successfully!\n\nSend another file anytime.`, { parse_mode: 'Markdown' });
+      } catch (e) {
+        tgBot.sendMessage(chatId, `❌ Could not reach @${username}. They may have blocked the bot.`);
+      }
+      delete userState[chatId];
       return;
     }
 
-    const txt = msg.text.toLowerCase();
-    const fmtMap = { pdf:'PDF', docx:'DOCX', doc:'DOCX', word:'DOCX', txt:'TXT', text:'TXT', png:'PNG', jpg:'JPG', jpeg:'JPG', webp:'WEBP', xlsx:'XLSX', excel:'XLSX', csv:'CSV' };
-    const matched = Object.keys(fmtMap).find(k => txt.includes(k));
-    if (matched) {
-      await convertAndSendTelegram(chatId, fmtMap[matched]);
-    } else {
-      tgBot.sendMessage(chatId, 'Please choose a format:', FORMAT_BUTTONS);
+    if (state && state.step === 'awaiting_format') {
+      const fmtMap = { pdf:'PDF', docx:'DOCX', doc:'DOCX', word:'DOCX', txt:'TXT', text:'TXT', png:'PNG', jpg:'JPG', jpeg:'JPG', webp:'WEBP', xlsx:'XLSX', excel:'XLSX', csv:'CSV' };
+      const m = Object.keys(fmtMap).find(k => txt.includes(k));
+      if (m) { await convertAndSendTelegram(chatId, fmtMap[m]); return; }
+      tgBot.sendMessage(chatId, 'Pick a format or type it — like _"convert to PDF"_:', { parse_mode: 'Markdown', ...FORMAT_BUTTONS });
+      return;
     }
+
+    if (state && state.step === 'awaiting_multi_action') {
+      if (txt.includes('zip')) { await zipAndSendTelegram(chatId); return; }
+      const fmtMap = { pdf:'PDF', docx:'DOCX', doc:'DOCX', word:'DOCX', txt:'TXT', text:'TXT', png:'PNG', jpg:'JPG', jpeg:'JPG', webp:'WEBP', xlsx:'XLSX', excel:'XLSX', csv:'CSV' };
+      const m = Object.keys(fmtMap).find(k => txt.includes(k));
+      if (m) { await convertAllAndSendTelegram(chatId, fmtMap[m]); return; }
+      tgBot.sendMessage(chatId, 'Choose what to do with your files:', MULTI_BUTTONS);
+      return;
+    }
+
+    tgBot.sendMessage(chatId, '📎 Please send a file first!');
   });
 
-  // ── Core: download, convert, send back ──
+  // ── Convert single file ──
   async function convertAndSendTelegram(chatId, targetFormat) {
     const state = userState[chatId];
-    if (!state) {
-      tgBot.sendMessage(chatId, 'Please send a file first!');
-      return;
-    }
-
+    if (!state || !state.files || !state.files[0]) { tgBot.sendMessage(chatId, 'Please send a file first!'); return; }
+    const file = state.files[0];
     tgBot.sendMessage(chatId, `⏳ Converting to ${targetFormat}...`);
-
     try {
-      // Download file from Telegram
-      const fileInfo  = await tgBot.getFile(state.fileId);
+      const fileInfo  = await tgBot.getFile(file.fileId);
       const fileUrl   = `https://api.telegram.org/file/bot${process.env.TELEGRAM_TOKEN}/${fileInfo.file_path}`;
       const response  = await axios.get(fileUrl, { responseType: 'arraybuffer' });
-
-      const fromExt   = path.extname(state.originalName).replace('.', '').toLowerCase() || 'jpg';
-      const inputId   = uuidv4();
-      const inputPath = path.join('uploads', inputId + '.' + fromExt);
+      const fromExt   = path.extname(file.originalName).replace('.', '').toLowerCase() || 'jpg';
+      const inputPath = path.join('uploads', uuidv4() + '.' + fromExt);
       fs.writeFileSync(inputPath, response.data);
-
       const outExt    = targetFormat.toLowerCase();
-      const shareId   = uuidv4();
-      const outPath   = path.join('converted', shareId + '.' + outExt);
-      const baseName  = path.basename(state.originalName, path.extname(state.originalName));
-
+      const outPath   = path.join('converted', uuidv4() + '.' + outExt);
+      const baseName  = path.basename(file.originalName, path.extname(file.originalName));
       await convertFile(inputPath, outPath, fromExt, outExt);
-
+      fs.unlink(inputPath, () => {});
       const outFileName = baseName + '.' + outExt;
       await tgBot.sendDocument(chatId, outPath, {}, { filename: outFileName });
-      tgBot.sendMessage(chatId, `✅ Done! Your file has been converted to *${targetFormat}*.\n\nSend another file to convert again!`, { parse_mode: 'Markdown' });
-
-      // Cleanup input file
-      fs.unlink(inputPath, () => {});
-      delete userState[chatId];
-
+      userState[chatId] = { ...state, step: 'awaiting_recipient', outPath, outFileName };
+      tgBot.sendMessage(chatId,
+        `✅ Converted to *${targetFormat}*!\n\n📤 Want to send this to someone?\nType their *@username* or type *skip* to finish.`,
+        { parse_mode: 'Markdown' }
+      );
     } catch (err) {
       console.error('Telegram conversion error:', err.message);
-      tgBot.sendMessage(chatId, `❌ Conversion failed: ${err.message}\n\nPlease try again with a different file.`);
+      tgBot.sendMessage(chatId, `❌ Conversion failed: ${err.message}`);
+      delete userState[chatId];
+    }
+  }
+
+  // ── ZIP multiple files ──
+  async function zipAndSendTelegram(chatId) {
+    const state = userState[chatId];
+    if (!state || !state.files || state.files.length === 0) return;
+    tgBot.sendMessage(chatId, `⏳ Zipping ${state.files.length} files...`);
+    const zipPath = path.join('converted', uuidv4() + '.zip');
+    try {
+      const downloaded = [];
+      for (const file of state.files) {
+        const info = await tgBot.getFile(file.fileId);
+        const url  = `https://api.telegram.org/file/bot${process.env.TELEGRAM_TOKEN}/${info.file_path}`;
+        const res  = await axios.get(url, { responseType: 'arraybuffer' });
+        const ext  = path.extname(file.originalName) || '.bin';
+        const p    = path.join('uploads', uuidv4() + ext);
+        fs.writeFileSync(p, res.data);
+        downloaded.push({ p, name: file.originalName });
+      }
+      await new Promise((resolve, reject) => {
+        const output  = fs.createWriteStream(zipPath);
+        const archive = archiver('zip', { zlib: { level: 9 } });
+        archive.pipe(output);
+        downloaded.forEach(({ p, name }) => archive.file(p, { name }));
+        archive.finalize();
+        output.on('close', resolve);
+        archive.on('error', reject);
+      });
+      downloaded.forEach(({ p }) => fs.unlink(p, () => {}));
+      await tgBot.sendDocument(chatId, zipPath, {}, { filename: 'shareeasy-files.zip' });
+      userState[chatId] = { ...state, step: 'awaiting_recipient', outPath: zipPath, outFileName: 'shareeasy-files.zip' };
+      tgBot.sendMessage(chatId,
+        `✅ Zipped *${state.files.length} files*!\n\n📤 Want to send this to someone?\nType their *@username* or type *skip*.`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (err) {
+      console.error('ZIP error:', err.message);
+      tgBot.sendMessage(chatId, `❌ ZIP failed: ${err.message}`);
+      delete userState[chatId];
+    }
+  }
+
+  // ── Convert all files to same format ──
+  async function convertAllAndSendTelegram(chatId, targetFormat) {
+    const state = userState[chatId];
+    if (!state || !state.files || state.files.length === 0) return;
+    tgBot.sendMessage(chatId, `⏳ Converting ${state.files.length} files to ${targetFormat}...`);
+    try {
+      for (const file of state.files) {
+        const info      = await tgBot.getFile(file.fileId);
+        const url       = `https://api.telegram.org/file/bot${process.env.TELEGRAM_TOKEN}/${info.file_path}`;
+        const res       = await axios.get(url, { responseType: 'arraybuffer' });
+        const fromExt   = path.extname(file.originalName).replace('.', '').toLowerCase() || 'jpg';
+        const inputPath = path.join('uploads', uuidv4() + '.' + fromExt);
+        fs.writeFileSync(inputPath, res.data);
+        const outPath   = path.join('converted', uuidv4() + '.' + targetFormat.toLowerCase());
+        const baseName  = path.basename(file.originalName, path.extname(file.originalName));
+        await convertFile(inputPath, outPath, fromExt, targetFormat.toLowerCase());
+        fs.unlink(inputPath, () => {});
+        await tgBot.sendDocument(chatId, outPath, {}, { filename: baseName + '.' + targetFormat.toLowerCase() });
+      }
+      tgBot.sendMessage(chatId, `✅ All *${state.files.length} files* converted to *${targetFormat}*!\n\nSend more files anytime.`, { parse_mode: 'Markdown' });
+      delete userState[chatId];
+    } catch (err) {
+      console.error('Convert all error:', err.message);
+      tgBot.sendMessage(chatId, `❌ Conversion failed: ${err.message}`);
+      delete userState[chatId];
     }
   }
 
