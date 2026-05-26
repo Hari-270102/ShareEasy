@@ -464,15 +464,14 @@ async function convertFile(inputPath, outputPath, from, to) {
 async function imageToPDF(inputPath, outputPath, fromExt) {
   return new Promise(async (resolve, reject) => {
     try {
-      const meta   = await sharp(inputPath).metadata();
-      const imgW   = meta.width  || 800;
-      const imgH   = meta.height || 600;
-      const pageW  = 595.28;  // A4 width in points
-      const pageH  = 841.89;  // A4 height in points
-      const margin = 40;
-      const ratio  = Math.min((pageW - margin * 2) / imgW, (pageH - margin * 2) / imgH);
+      const meta  = await sharp(inputPath).metadata();
+      const imgW  = meta.width  || 800;
+      const imgH  = meta.height || 600;
+      // 1pt = 1/72 inch; images are typically 72–96 DPI — use pixel dimensions directly as points
+      const pageW = imgW;
+      const pageH = imgH;
 
-      const doc    = new PDFDoc({ size: 'A4', margin: 0 });
+      const doc    = new PDFDoc({ size: [pageW, pageH], margin: 0 });
       const stream = fs.createWriteStream(outputPath);
       doc.pipe(stream);
 
@@ -480,9 +479,9 @@ async function imageToPDF(inputPath, outputPath, fromExt) {
       const needsConvert = ['webp', 'gif', 'tiff', 'bmp'].includes(fromExt);
       if (needsConvert) {
         const pngBuf = await sharp(inputPath).png().toBuffer();
-        doc.image(pngBuf, margin, margin, { width: imgW * ratio, height: imgH * ratio });
+        doc.image(pngBuf, 0, 0, { width: pageW, height: pageH });
       } else {
-        doc.image(inputPath, margin, margin, { width: imgW * ratio, height: imgH * ratio });
+        doc.image(inputPath, 0, 0, { width: pageW, height: pageH });
       }
 
       doc.end();
@@ -496,10 +495,11 @@ async function imageToPDF(inputPath, outputPath, fromExt) {
 async function imageToDocx(inputPath, outputPath) {
   const pngBuf = await sharp(inputPath).png().toBuffer();
   const meta   = await sharp(inputPath).metadata();
-  const maxPx  = 600;
-  const scale  = (meta.width || maxPx) > maxPx ? maxPx / meta.width : 1;
-  const w = Math.round((meta.width  || maxPx) * scale);
-  const h = Math.round((meta.height || 400)   * scale);
+  // Always scale image to fill the full A4 content width (600px ≈ 6.25 inches)
+  const contentW = 600;
+  const scale = contentW / (meta.width || contentW);
+  const w = contentW;
+  const h = Math.round((meta.height || 400) * scale);
 
   const doc = new Document({
     sections: [{
@@ -612,7 +612,7 @@ if (process.env.TELEGRAM_TOKEN) {
 
   const userState = {};  // chatId → { files[], step, timer }
 
-  // ── Compact 2-row format buttons ──
+  // ── 4-per-row format buttons ──
   const FORMAT_BUTTONS = {
     reply_markup: {
       inline_keyboard: [
