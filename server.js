@@ -223,10 +223,11 @@ app.post('/api/bot', async (req, res) => {
   }
   try {
     const result = await groqBot(message, currentFormat, currentRecipient, currentRecipientEmail);
+    console.log('🤖 Bot: Groq AI');
     res.json(result);
   } catch (err) {
-    console.error('Gemini error:', err.message);
-    // Fall back to local keyword bot so the app always works
+    console.error('Groq error:', err.message);
+    console.log('🤖 Bot: local keyword fallback');
     const result = localBot(message, currentFormat, currentRecipient, currentRecipientEmail);
     res.json(result);
   }
