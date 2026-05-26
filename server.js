@@ -464,25 +464,21 @@ async function convertFile(inputPath, outputPath, from, to) {
 async function imageToPDF(inputPath, outputPath, fromExt) {
   return new Promise(async (resolve, reject) => {
     try {
-      const meta  = await sharp(inputPath).metadata();
-      const imgW  = meta.width  || 800;
-      const imgH  = meta.height || 600;
-      // 1pt = 1/72 inch; images are typically 72–96 DPI — use pixel dimensions directly as points
-      const pageW = imgW;
-      const pageH = imgH;
+      const meta = await sharp(inputPath).metadata();
+      const imgW = meta.width  || 800;
+      const imgH = meta.height || 600;
 
-      const doc    = new PDFDoc({ size: [pageW, pageH], margin: 0 });
+      // Always convert to JPEG for consistent PDFKit embedding
+      const imgBuf = await sharp(inputPath).jpeg({ quality: 95 }).toBuffer();
+
+      // autoFirstPage:false + explicit addPage ensures truly zero margin
+      const doc    = new PDFDoc({ autoFirstPage: false });
       const stream = fs.createWriteStream(outputPath);
       doc.pipe(stream);
+      doc.addPage({ size: [imgW, imgH], margin: 0 });
 
-      // PDFKit supports PNG and JPEG natively — convert anything else to PNG first
-      const needsConvert = ['webp', 'gif', 'tiff', 'bmp'].includes(fromExt);
-      if (needsConvert) {
-        const pngBuf = await sharp(inputPath).png().toBuffer();
-        doc.image(pngBuf, 0, 0, { width: pageW, height: pageH });
-      } else {
-        doc.image(inputPath, 0, 0, { width: pageW, height: pageH });
-      }
+      // cover: fills the entire page box, no white gaps regardless of rounding
+      doc.image(imgBuf, 0, 0, { cover: [imgW, imgH] });
 
       doc.end();
       stream.on('finish', resolve);
