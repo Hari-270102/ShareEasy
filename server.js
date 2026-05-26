@@ -604,7 +604,9 @@ const Tesseract   = require('tesseract.js');
 const BASE_URL = process.env.RENDER_EXTERNAL_URL || 'https://shareeasy-uvia.onrender.com';
 
 if (process.env.TELEGRAM_TOKEN) {
-  const tgBot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
+  const WEBHOOK_URL = `${BASE_URL}/bot${process.env.TELEGRAM_TOKEN}`;
+  const tgBot = new TelegramBot(process.env.TELEGRAM_TOKEN, { webHook: true });
+  tgBot.setWebHook(WEBHOOK_URL);
 
   const userState  = {};  // chatId → { files[], step, timer }
   const userHistory = {};  // userId → [{ fileId, fileName, date }]
@@ -986,7 +988,13 @@ if (process.env.TELEGRAM_TOKEN) {
     await tgBot.answerInlineQuery(query.id, results, { cache_time: 0 });
   });
 
-  console.log('🤖 Telegram bot is active!');
+  // ── Webhook endpoint ──
+  app.post(`/bot${process.env.TELEGRAM_TOKEN}`, (req, res) => {
+    tgBot.processUpdate(req.body);
+    res.sendStatus(200);
+  });
+
+  console.log('🤖 Telegram bot active (webhook mode)');
 }
 
 // ==============================================
