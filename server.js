@@ -489,20 +489,30 @@ async function imageToPDF(inputPath, outputPath, fromExt) {
 
 // Embeds an image into a real DOCX Word file
 async function imageToDocx(inputPath, outputPath) {
-  const pngBuf = await sharp(inputPath).png().toBuffer();
   const meta   = await sharp(inputPath).metadata();
-  // Always scale image to fill the full A4 content width (600px ≈ 6.25 inches)
-  const contentW = 600;
-  const scale = contentW / (meta.width || contentW);
-  const w = contentW;
-  const h = Math.round((meta.height || 400) * scale);
+  const imgW   = meta.width  || 800;
+  const imgH   = meta.height || 600;
+  // Convert to PNG for docx embedding
+  const pngBuf = await sharp(inputPath).png().toBuffer();
+
+  // EMU = English Metric Units: 1 pixel = 9525 EMU (at 96 DPI)
+  const emuPerPx = 9525;
+  const pageWemu = imgW * emuPerPx;
+  const pageHemu = imgH * emuPerPx;
 
   const doc = new Document({
     sections: [{
+      properties: {
+        page: {
+          size: { width: pageWemu, height: pageHemu },
+          margin: { top: 0, right: 0, bottom: 0, left: 0 }
+        }
+      },
       children: [
         new Paragraph({
+          spacing: { before: 0, after: 0 },
           children: [
-            new ImageRun({ data: pngBuf, transformation: { width: w, height: h }, type: 'png' })
+            new ImageRun({ data: pngBuf, transformation: { width: imgW, height: imgH }, type: 'png' })
           ]
         })
       ]
@@ -617,7 +627,7 @@ if (process.env.TELEGRAM_TOKEN) {
       inline_keyboard: [
         [
           { text: '📄 PDF',   callback_data: 'fmt_PDF'  },
-          { text: '📝 Word',  callback_data: 'fmt_DOCX' },
+          { text: '📝 DOCX',  callback_data: 'fmt_DOCX' },
           { text: '📃 Text',  callback_data: 'fmt_TXT'  },
           { text: '🖼 PNG',   callback_data: 'fmt_PNG'  }
         ],
