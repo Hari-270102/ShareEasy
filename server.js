@@ -1008,6 +1008,105 @@ if (process.env.TELEGRAM_TOKEN) {
 }
 
 // ==============================================
+// DISCORD BOT
+// ==============================================
+if (process.env.DISCORD_TOKEN && process.env.DISCORD_CLIENT_ID) {
+  const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
+
+  const discordClient = new Client({ intents: [GatewayIntentBits.Guilds] });
+
+  // ── Register slash commands on startup ──
+  const commands = [
+    new SlashCommandBuilder()
+      .setName('convert')
+      .setDescription('Convert a file to a different format')
+      .addAttachmentOption(opt =>
+        opt.setName('file').setDescription('The file to convert').setRequired(true))
+      .addStringOption(opt =>
+        opt.setName('format')
+          .setDescription('Target format')
+          .setRequired(true)
+          .addChoices(
+            { name: 'PDF',  value: 'pdf'  },
+            { name: 'DOCX', value: 'docx' },
+            { name: 'TXT',  value: 'txt'  },
+            { name: 'PNG',  value: 'png'  },
+            { name: 'JPG',  value: 'jpg'  },
+            { name: 'WebP', value: 'webp' },
+            { name: 'XLSX', value: 'xlsx' },
+            { name: 'CSV',  value: 'csv'  }
+          ))
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('zip')
+      .setDescription('Coming soon: ZIP multiple files')
+      .toJSON()
+  ];
+
+  const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+  rest.put(Routes.applicationCommands(process.env.DISCORD_CLIENT_ID), { body: commands })
+    .then(() => console.log('✅ Discord slash commands registered globally'))
+    .catch(err => console.error('Discord command register error:', err.message));
+
+  // ── Handle /convert command ──
+  discordClient.on('interactionCreate', async interaction => {
+    if (!interaction.isChatInputCommand()) return;
+
+    if (interaction.commandName === 'convert') {
+      await interaction.deferReply();
+
+      const attachment   = interaction.options.getAttachment('file');
+      const targetFormat = interaction.options.getString('format');
+      const originalName = attachment.name || 'file';
+      const fromExt      = path.extname(originalName).replace('.', '').toLowerCase() || 'jpg';
+
+      // File size check (Discord free: 8MB)
+      if (attachment.size > 8 * 1024 * 1024) {
+        await interaction.editReply('❌ File too large. Discord supports up to 8MB.');
+        return;
+      }
+
+      try {
+        const response  = await axios.get(attachment.url, { responseType: 'arraybuffer' });
+        const inputPath = path.join('uploads', uuidv4() + '.' + fromExt);
+        fs.writeFileSync(inputPath, response.data);
+
+        const shareId   = uuidv4();
+        const outPath   = path.join('converted', shareId + '.' + targetFormat);
+        const baseName  = path.basename(originalName, path.extname(originalName));
+        const outName   = baseName + '.' + targetFormat;
+
+        await convertFile(inputPath, outPath, fromExt, targetFormat);
+        fs.unlink(inputPath, () => {});
+
+        // Register share link
+        sharedFiles.unshift({
+          shareId, displayName: outName,
+          convertedFrom: fromExt.toUpperCase(), convertedTo: targetFormat.toUpperCase(),
+          filePath: outPath, fileSize: fs.statSync(outPath).size,
+          createdAt: new Date().toISOString(), status: 'Ready', recipientName: 'Discord'
+        });
+
+        const shareLink  = `${BASE_URL}/share/${shareId}`;
+        const discordFile = new AttachmentBuilder(outPath, { name: outName });
+
+        await interaction.editReply({
+          content: `✅ **Converted to ${targetFormat.toUpperCase()}!**\n🔗 Share link (24h): ${shareLink}`,
+          files: [discordFile]
+        });
+
+      } catch (err) {
+        console.error('Discord conversion error:', err.message);
+        await interaction.editReply(`❌ Conversion failed: ${err.message}`);
+      }
+    }
+  });
+
+  discordClient.once('ready', () => console.log(`🎮 Discord bot ready: ${discordClient.user.tag}`));
+  discordClient.login(process.env.DISCORD_TOKEN).catch(err => console.error('Discord login error:', err.message));
+}
+
+// ==============================================
 // START THE SERVER
 // ==============================================
 app.listen(PORT, () => {
